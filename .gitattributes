@@ -1,0 +1,12 @@
+# Line endings must survive a push from Windows (GitHub Desktop):
+*.bat      text eol=crlf
+*.command  text eol=lf
+*.sh       text eol=lf
+*.py       text eol=lf
+*.yml      text eol=lf
+*.iss      text eol=crlf
+*.md       text
+# binary files
+*.png  binary
+*.ico  binary
+*.icns binary

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# build output (PyInstaller / installers)
+build/
+dist/
+out/
+pkgroot/
+component.plist
+*.spec.bak
+
+# self-test work folders
+citest/
+citest_installed/
+mes_selftest/
+
+# imaging data and results - never commit recordings
+*.mes
+*.mesc
+*.tif
+*.tiff
+*.npy
+*.npz
+roi_results*.csv
+rois*.json
+*_roi_graph.*
+*_metadata.json
+mes_overview.csv
+overview.csv
+*_rotation.tif
+results/
+exports/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/

@@ -1,0 +1,207 @@
+# Builds the MES Viewer installers on GitHub's own machines and attaches them to a release.
+#
+#   git tag v1.0.0 && git push origin v1.0.0      (or create the tag in GitHub Desktop / on github.com)
+#
+# gives a release "MES Viewer 1.0.0" with
+#   MES-Viewer-1.0.0-Windows-setup.exe          Windows 10/11, 64-bit, per-user install (no admin)
+#   MES-Viewer-1.0.0-macOS-AppleSilicon.pkg     Macs with M1/M2/M3/M4
+#   MES-Viewer-1.0.0-macOS-Intel.pkg            Intel Macs
+# (jerjely.github.io finds the downloads by exactly these names.)
+#
+# It can also be started by hand: Actions tab -> Build installers -> Run workflow. With a version
+# (e.g. 1.0.0) it makes the release "MES Viewer 1.0.0" and the tag v1.0.0 from the chosen branch;
+# with the version left empty it only builds and tests, and keeps the installers as downloads of
+# that run (Actions -> the run -> Artifacts).
+#
+# Every build runs the built app's self-test (synthetic .mes files in MATLAB v5 and v7.3 layout:
+# open, overview, projection, ROI across planes, channel subtraction, noise reduction, TIFF export,
+# graph, 3D fallback) before packaging, and again on the installed app; any failure stops the run,
+# so a broken installer is never released.
+
+name: Build installers
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for a release, e.g. 1.0.0 (leave empty to only build and test)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-15            # Apple silicon (arm64); macos-14 has been retired
+            label: macOS-AppleSilicon
+          - os: macos-15-intel      # Intel (x86_64); macos-13 has been retired
+            label: macOS-Intel
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.label }}
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Version from the tag
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ -n "$INPUT_VERSION" ]]; then V="${INPUT_VERSION#v}"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then V="${GITHUB_REF_NAME#v}"
+          else V="0.0.0-test"; fi
+          echo "MESV_VERSION=$V" >> "$GITHUB_ENV"
+          printf '# Written by the release workflow from the version tag.\nAPP_VERSION = "%s (build %s)"\n' \
+            "$V" "$(date -u +%Y-%m-%d)" > version.py
+          cat version.py
+
+      - name: Install MES Viewer's packages and PyInstaller
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt "pyinstaller>=6.11"
+          python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+
+      - name: Build the app
+        shell: bash
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build install/mes_viewer.spec
+
+      - name: Self-test of the built app
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then APP=dist/MES-Viewer/MES-Viewer.exe; else APP=dist/MES-Viewer.app/Contents/MacOS/MES-Viewer; fi
+          python install/run_selftest.py "$APP" citest
+
+      - name: Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup 6\ISCC.exe", "C:\Program Files\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup 6\ISCC.exe", "C:\Program Files\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          & $iscc.FullName "/DMyVersion=$env:MESV_VERSION" install\mes_viewer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Move-Item "dist\MES-Viewer-$env:MESV_VERSION-Windows-setup.exe" out\
+
+      - name: macOS installer (pkg)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p out pkgroot
+          ditto dist/MES-Viewer.app pkgroot/MES-Viewer.app
+          # always install into /Applications (not "relocated" onto another copy of the app)
+          pkgbuild --analyze --root pkgroot component.plist
+          plutil -replace 0.BundleIsRelocatable -bool NO component.plist
+          pkgbuild --root pkgroot --component-plist component.plist --install-location /Applications \
+                   --identifier io.github.jerjely.mesviewer --version "$MESV_VERSION" \
+                   "out/MES-Viewer-$MESV_VERSION-${{ matrix.label }}.pkg"
+
+      - name: Install it (Windows, silent per-user install)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "MESViewerInstalled"
+          $setup = (Resolve-Path "out\MES-Viewer-$env:MESV_VERSION-Windows-setup.exe").Path
+          $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER", "/DIR=`"$dest`""
+          "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+          if (-not (Test-Path "$dest\MES-Viewer.exe")) { Write-Error "MES-Viewer.exe was not installed"; exit 1 }
+          "INSTALLED_APP=$dest\MES-Viewer.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install it (macOS, into /Applications)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          sudo installer -pkg "out/MES-Viewer-$MESV_VERSION-${{ matrix.label }}.pkg" -target /
+          test -x /Applications/MES-Viewer.app/Contents/MacOS/MES-Viewer
+          echo "INSTALLED_APP=/Applications/MES-Viewer.app/Contents/MacOS/MES-Viewer" >> "$GITHUB_ENV"
+
+      - name: Self-test of the installed app
+        shell: bash
+        run: python install/run_selftest.py "$INSTALLED_APP" citest_installed
+
+      - name: Check the file name the website expects
+        shell: bash
+        run: |
+          case "${{ matrix.label }}" in
+            Windows) WANT="MES-Viewer-$MESV_VERSION-Windows-setup.exe" ;;
+            *)       WANT="MES-Viewer-$MESV_VERSION-${{ matrix.label }}.pkg" ;;
+          esac
+          ls -l out
+          [[ -f "out/$WANT" ]] || { echo "::error::expected out/$WANT"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: out/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-${{ matrix.label }}
+          path: |
+            citest/selftest.txt
+            citest_installed/selftest.txt
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag' || inputs.version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          pattern: "{Windows,macOS-AppleSilicon,macOS-Intel}"
+          merge-multiple: true
+
+      - name: Create the release and attach the installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ -n "$INPUT_VERSION" ]]; then TAG="v${INPUT_VERSION#v}"; else TAG="$GITHUB_REF_NAME"; fi
+          V="${TAG#v}"
+          ls -l installers
+          for f in "MES-Viewer-$V-Windows-setup.exe" "MES-Viewer-$V-macOS-AppleSilicon.pkg" "MES-Viewer-$V-macOS-Intel.pkg"; do
+            [[ -f "installers/$f" ]] || { echo "::error::missing installers/$f"; exit 1; }
+          done
+          cat > notes.md <<EOF
+          Installers for MES Viewer $V, a viewer for Femtonics .mes two-photon recordings.
+
+          | Computer | File |
+          |---|---|
+          | Windows 10/11 (64-bit) | MES-Viewer-$V-Windows-setup.exe |
+          | Mac with Apple silicon (M1–M4) | MES-Viewer-$V-macOS-AppleSilicon.pkg |
+          | Intel Mac | MES-Viewer-$V-macOS-Intel.pkg |
+
+          **Windows:** the installer is per-user and needs no administrator rights. It is not code-signed, so Windows SmartScreen may say it protected your PC: click **More info** → **Run anyway**. MES Viewer is then in the Start menu (desktop shortcut optional).
+
+          **Mac:** the .pkg is not signed by an Apple developer, so the first opening is blocked. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**, then run the installer. MES Viewer is then in Applications.
+
+          The installers include everything MES Viewer needs; nothing else has to be installed. The 3D view uses the built-in renderer (rotating projection and orthogonal views); napari is not included — see the README to use it when running from source.
+          EOF
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" installers/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" installers/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "MES Viewer $V" --notes-file notes.md
+          fi

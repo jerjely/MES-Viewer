@@ -1,0 +1,17 @@
+# Conda environment for running MES Viewer from source (mes_viewer.py)
+# create:  conda env create -f environment.yml
+# update:  conda env update -n mesviewer -f environment.yml --prune
+# (install_mes_viewer_env.bat / install_mes_viewer_env.command do this for you)
+name: mesviewer
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - tk                    # tkinter GUI toolkit
+  - numpy>=1.24
+  - scipy>=1.10           # reads .mes (MATLAB v5) + 3D resampling/rotation, filters
+  - matplotlib-base>=3.7  # image display, PolygonSelector ROIs (TkAgg backend)
+  - tifffile>=2023.1      # ImageJ hyperstack TIFF export (LUTs, calibration)
+  - h5py>=3.8             # newer MES files saved as MATLAB v7.3 / HDF5
+  - pillow

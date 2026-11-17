@@ -1,0 +1,10 @@
+# MES Viewer - Python packages (pip). Python 3.10-3.13 with tkinter (included in the python.org
+# installers and in conda's python). The release workflow builds the installers from this file.
+numpy>=1.24
+scipy>=1.10          # reads .mes files saved as MATLAB v5; 3D resampling, filters
+matplotlib>=3.7      # image display, PolygonSelector ROIs, graphs (TkAgg backend)
+tifffile>=2023.1     # ImageJ hyperstack TIFF export (LUTs, calibration)
+h5py>=3.8            # newer .mes files saved as MATLAB v7.3 / HDF5
+pillow>=9.0
+# optional, only when running from source, for the GPU 3D volume view:
+#   napari[all]
