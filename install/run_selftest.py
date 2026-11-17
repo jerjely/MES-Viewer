@@ -12,7 +12,17 @@ import subprocess
 import sys
 
 
+def _utf8_console():
+    """The report contains µ and Δ; Windows consoles default to cp1252, which cannot print them."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def main(app, folder):
+    _utf8_console()
     os.makedirs(folder, exist_ok=True)
     report = os.path.join(folder, "selftest.txt")
     if os.path.exists(report):

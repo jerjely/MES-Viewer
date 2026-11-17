@@ -19,6 +19,16 @@ import traceback
 import numpy as np
 
 
+def _say(text):
+    """print() that never fails: no console (windowed app) or a console without µ/Δ (cp1252)."""
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", "replace").decode("ascii"), flush=True)
+    except Exception:
+        pass
+
+
 class SelfTestError(AssertionError):
     pass
 
@@ -37,7 +47,7 @@ def run(folder):
 
     def ok(msg):
         log.append(f"  ok  {msg}")
-        print(f"  ok  {msg}", flush=True)
+        _say(f"  ok  {msg}")
 
     try:
         _run(folder, ok)
@@ -52,7 +62,7 @@ def run(folder):
                       f"platform: {sys.platform}", f"frozen: {mes_viewer.FROZEN}", ""] + log) + "\n"
     with open(report, "w", encoding="utf-8") as fh:
         fh.write(text)
-    print(status, flush=True)
+    _say(status)
     return code
 
 

@@ -33,6 +33,10 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONIOENCODING: utf-8     # Windows consoles default to cp1252, which cannot print µ / Δ
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     strategy:
